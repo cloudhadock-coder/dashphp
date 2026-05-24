@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, CartesianGrid } from 'recharts';
+import { getDashboardData } from './services/dashboardService';
 import './index.css';
 
 const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
@@ -23,27 +24,18 @@ function App() {
 
   const fetchDashboardData = async () => {
     try {
-      const baseUrl = import.meta.env.DEV ? 'http://localhost:8000' : '';
-      const qs = `?periodo=${periodo}&responsavel=${responsavel}&motivo=${motivo}`;
-      
-      const [resInd, resGraf, resLista] = await Promise.all([
-        fetch(`${baseUrl}/api/indicadores.php${qs}`),
-        fetch(`${baseUrl}/api/graficos.php${qs}`),
-        fetch(`${baseUrl}/api/lista_chamados.php${qs}&page=${page}&limit=10`)
-      ]);
+      setLoading(true);
+      const data = await getDashboardData({ periodo, responsavel, motivo }, page);
 
-      const [jsonInd, jsonGraf, jsonLista] = await Promise.all([
-        resInd.json(), resGraf.json(), resLista.json()
-      ]);
-
-      setIndicadores(jsonInd);
-      setGraficos(jsonGraf);
-      setLista(jsonLista);
+      setIndicadores(data.indicadores);
+      setGraficos(data.graficos);
+      setLista(data.lista);
       setLastUpdated(new Date());
       setLoading(false);
+      setError(null);
     } catch (err) {
       console.error(err);
-      setError('Aviso: Falha ao carregar dados da API.');
+      setError('Erro: ' + (err.message || err.error_description || JSON.stringify(err)));
       setLoading(false);
     }
   };
