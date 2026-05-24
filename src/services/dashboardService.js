@@ -1,7 +1,7 @@
 // src/services/dashboardService.js
 import { supabase } from '../supabaseClient';
 
-export async function getDashboardData(filters, page = 1) {
+export async function getDashboardData(filters) {
   const { periodo, responsavel, motivo } = filters;
   
   // Como não sabemos se as Chaves Estrangeiras (FKs) estão perfeitamente configuradas no Supabase,
@@ -87,6 +87,46 @@ export async function getDashboardData(filters, page = 1) {
   });
   const taxa_resolucao_prazo = fechados > 0 ? ((no_prazo / fechados) * 100).toFixed(1) : 0;
 
+  const atrasosPorMotivo = {};
+  chamados.forEach(c => {
+    let atrasado = false;
+    if (c.codstatus === 4 || c.codstatus === 5) {
+      if (c.data_de_fechamento) {
+        const diffMins = (new Date(c.data_de_fechamento) - new Date(c.data_de_inicio)) / (1000 * 60);
+        if (diffMins > 1440) atrasado = true;
+      }
+    } else {
+      const dias = (new Date() - new Date(c.data_de_inicio)) / (1000 * 60 * 60 * 24);
+      if (dias >= 1) atrasado = true;
+    }
+    
+    if (atrasado) {
+      const nomeMotivo = motivosMap[c.codmotivo] || 'Outros';
+      atrasosPorMotivo[nomeMotivo] = (atrasosPorMotivo[nomeMotivo] || 0) + 1;
+    }
+  });
+
+  let pior_motivo = { motivo: 'Nenhum', quantidade: 0 };
+  for (const [motivo, count] of Object.entries(atrasosPorMotivo)) {
+    if (count > pior_motivo.quantidade) {
+      pior_motivo = { motivo, quantidade: count };
+    }
+  }
+
+  const responsaveisCount = {};
+  chamados.forEach(c => {
+    if (c.codstatus === 4 || c.codstatus === 5) {
+      const nome = respsMap[c.codresponsavel] || 'Não Atribuído';
+      responsaveisCount[nome] = (responsaveisCount[nome] || 0) + 1;
+    }
+  });
+
+  const top_responsaveis = Object.entries(responsaveisCount)
+    .filter(([nome]) => nome !== 'Não Atribuído')
+    .map(([nome, total]) => ({ nome, total }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 3);
+
   // 3. GRÁFICOS
   const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const mapSemana = [0,0,0,0,0,0,0];
@@ -124,14 +164,9 @@ export async function getDashboardData(filters, page = 1) {
     dias_aberto: Math.floor((now - new Date(c.data_de_inicio)) / (1000 * 60 * 60 * 24))
   }));
 
-  // Paginação Manual
-  const limit = 10;
-  const offset = (page - 1) * limit;
-  const pagedData = listaAbertos.slice(offset, offset + limit);
-
   return {
-    indicadores: { total_status: { abertos, fechados, total, abertos_percent }, tempo_medio_minutos, abertos_hoje, taxa_resolucao_prazo },
+    indicadores: { total_status: { abertos, fechados, total, abertos_percent }, tempo_medio_minutos, abertos_hoje, taxa_resolucao_prazo, pior_motivo, top_responsaveis },
     graficos: { por_dia_semana, por_motivo, evolucao_mensal },
-    lista: { data: pagedData, total: listaAbertos.length, totalPages: Math.ceil(listaAbertos.length / limit) }
+    lista: listaAbertos
   };
 }

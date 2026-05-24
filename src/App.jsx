@@ -19,13 +19,17 @@ function App() {
   const [page, setPage] = useState(1);
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
+  // Table specific filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [tablePriority, setTablePriority] = useState('todas');
+
   // Modal state
   const [selectedTicket, setSelectedTicket] = useState(null);
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const data = await getDashboardData({ periodo, responsavel, motivo }, page);
+      const data = await getDashboardData({ periodo, responsavel, motivo });
 
       setIndicadores(data.indicadores);
       setGraficos(data.graficos);
@@ -40,16 +44,17 @@ function App() {
     }
   };
 
-  // Fetch when filters or page change
+  // Fetch when global filters change (remove page from dependency to avoid refetching on pagination)
   useEffect(() => {
     fetchDashboardData();
-  }, [periodo, responsavel, motivo, page]);
+    setPage(1); // Reset page on global filter change
+  }, [periodo, responsavel, motivo]);
 
   // Auto-refresh a cada 5 minutos
   useEffect(() => {
     const interval = setInterval(fetchDashboardData, 300000);
     return () => clearInterval(interval);
-  }, [periodo, responsavel, motivo, page]);
+  }, [periodo, responsavel, motivo]);
 
   if (loading && !indicadores) {
     return (
@@ -138,6 +143,11 @@ function App() {
           <div className="card-value">{indicadores?.taxa_resolucao_prazo || 0}%</div>
           <div className="card-subtitle">Dos chamados fechados no período</div>
         </div>
+        <div className="card">
+          <div className="card-title">Maior Gargalo (Atrasos)</div>
+          <div className="card-value" style={{fontSize: '1.4rem'}}>{indicadores?.pior_motivo?.motivo || 'N/A'}</div>
+          <div className="card-subtitle">{indicadores?.pior_motivo?.quantidade || 0} chamados fora do prazo</div>
+        </div>
       </div>
 
       {/* Charts Row */}
@@ -181,11 +191,51 @@ function App() {
             </LineChart>
           </ResponsiveContainer>
         </div>
+
+        {/* Top 3 Responsáveis */}
+        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="card-title" style={{ marginBottom: '1rem' }}>🏆 Top 3 Resolvidos</div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            {(indicadores?.top_responsaveis || []).map((resp, index) => (
+              <div key={resp.nome} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem 0', borderBottom: index < 2 ? '1px solid var(--card-border)' : 'none' }}>
+                <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>
+                  {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'} {resp.nome}
+                </span>
+                <span style={{ color: 'var(--accent-color)', fontWeight: 'bold', fontSize: '1.1rem' }}>{resp.total}</span>
+              </div>
+            ))}
+            {(!indicadores?.top_responsaveis || indicadores.top_responsaveis.length === 0) && (
+              <div style={{ textAlign: 'center', color: 'gray', padding: '2rem 0' }}>Nenhum chamado concluído</div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Table Section */}
       <div className="table-container" style={{ marginBottom: '2rem' }}>
-        <div className="card-title" style={{ marginBottom: '1.5rem' }}>Fila de Chamados Abertos (Ação Requerida)</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+          <div className="card-title" style={{ margin: 0 }}>Fila de Chamados Abertos (Ação Requerida)</div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input 
+              type="text" 
+              placeholder="Buscar ID ou Título..."
+              value={searchTerm}
+              onChange={e => { setSearchTerm(e.target.value); setPage(1); }}
+              style={{ padding: '0.5rem', borderRadius: '8px', border: '1px solid var(--card-border)', background: 'var(--bg-color)', color: 'white' }}
+            />
+            <select 
+              value={tablePriority}
+              onChange={e => { setTablePriority(e.target.value); setPage(1); }}
+              style={{ padding: '0.5rem', borderRadius: '8px', border: '1px solid var(--card-border)', background: 'var(--bg-color)', color: 'white' }}
+            >
+              <option value="todas">Todas Prioridades</option>
+              <option value="baixa">Baixa</option>
+              <option value="media">Média</option>
+              <option value="alta">Alta</option>
+              <option value="critica">Crítica</option>
+            </select>
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -198,31 +248,54 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {(lista?.data || []).map((ticket) => (
-              <tr key={ticket.codigo} className="clickable-row" onClick={() => setSelectedTicket(ticket)}>
-                <td style={{fontWeight: 'bold', color: 'var(--accent-color)'}}>#{ticket.codigo}</td>
-                <td>{ticket.titulo}</td>
-                <td>{ticket.motivo}</td>
-                <td>{ticket.responsavel || 'Não Atribuído'}</td>
-                <td>{getStatusBadge(ticket)}</td>
-                <td>{formatDate(ticket.data_de_inicio)}</td>
-              </tr>
-            ))}
-            {(!lista?.data || lista.data.length === 0) && (
-              <tr>
-                <td colSpan="6" style={{ textAlign: 'center' }}>Nenhum chamado aberto na fila atual.</td>
-              </tr>
-            )}
+            {(() => {
+              let filteredTable = lista || [];
+              if (searchTerm) {
+                const term = searchTerm.toLowerCase();
+                filteredTable = filteredTable.filter(c => 
+                  c.titulo?.toLowerCase().includes(term) || 
+                  String(c.codigo).includes(term)
+                );
+              }
+              if (tablePriority !== 'todas') {
+                filteredTable = filteredTable.filter(c => (c.prioridade || 'Media').toLowerCase() === tablePriority.toLowerCase());
+              }
+              
+              const totalPages = Math.ceil(filteredTable.length / 10) || 1;
+              const pagedTable = filteredTable.slice((page - 1) * 10, page * 10);
+
+              if (pagedTable.length === 0) {
+                return <tr><td colSpan="6" style={{ textAlign: 'center' }}>Nenhum chamado encontrado com estes filtros.</td></tr>;
+              }
+
+              return (
+                <>
+                  {pagedTable.map((ticket) => (
+                    <tr key={ticket.codigo} className="clickable-row" onClick={() => setSelectedTicket(ticket)}>
+                      <td style={{fontWeight: 'bold', color: 'var(--accent-color)'}}>#{ticket.codigo}</td>
+                      <td>{ticket.titulo}</td>
+                      <td>{ticket.motivo}</td>
+                      <td>{ticket.responsavel || 'Não Atribuído'}</td>
+                      <td>{getStatusBadge(ticket)}</td>
+                      <td>{formatDate(ticket.data_de_inicio)}</td>
+                    </tr>
+                  ))}
+                  {totalPages > 1 && (
+                    <tr style={{background: 'transparent', border: 'none'}}>
+                      <td colSpan="6" style={{padding: 0}}>
+                        <div className="pagination" style={{padding: '1rem 0'}}>
+                          <button disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
+                          <span style={{alignSelf: 'center'}}>Página {page} de {totalPages}</span>
+                          <button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Próxima</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })()}
           </tbody>
         </table>
-        
-        {lista?.totalPages > 1 && (
-          <div className="pagination">
-            <button disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
-            <span style={{alignSelf: 'center'}}>Página {page} de {lista.totalPages}</span>
-            <button disabled={page === lista.totalPages} onClick={() => setPage(p => p + 1)}>Próxima</button>
-          </div>
-        )}
       </div>
 
       {/* Ticket Details Modal */}
